@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+        h1, h3 {
+            text-align: center;
+        }
+        form, table {
+            max-width: 700px;
+            margin: 20px auto;
+        }
+        input, button {
+            padding: 10px;
+            margin: 5px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 8px;
+            border: 1px solid #ccc;
+            text-align: center;
+        }
+        .actions {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+        .logout {
+            text-align: center;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Welcome, {{ username }}</h1>
+    <h3>Total Expenses: ₹{{ total }}</h3>
+
+    <form method="POST" action="{{ url_for('add_expense') }}">
+        <input type="text" name="title" placeholder="Expense Title" required>
+        <input type="number" name="amount" placeholder="Amount" step="0.01" required>
+        <button type="submit">Add Expense</button>
+    </form>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Title</th>
+                <th>Amount (₹)</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for expense in expenses %}
+            <tr>
+                <td>{{ expense[0] }}</td>
+                <td>{{ expense[2] }}</td>
+                <td>{{ expense[3] }}</td>
+                <td>
+                    <div class="actions">
+                        <a href="{{ url_for('update_expense', expense_id=expense[0]) }}">Edit</a>
+                        <form action="{{ url_for('delete_expense', expense_id=expense[0]) }}" method="POST" style="display:inline;">
+                            <button type="submit">Delete</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="logout">
+        <a href="{{ url_for('logout') }}">Logout</a>
+    </div>
+</body>
+</html>
