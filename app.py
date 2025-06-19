@@ -1,17 +1,37 @@
 from flask import Flask, render_template, request, redirect, url_for, session
-from flask_mysqldb import MySQL
 from werkzeug.security import generate_password_hash, check_password_hash
+import sqlite3
+import os
 
 app = Flask(__name__)
-app.secret_key = '12112'  # Used for session management
+app.secret_key = '12112'
 
-# MySQL Configuration
-app.config['MYSQL_HOST'] = 'localhost'
-app.config['MYSQL_USER'] = 'root'
-app.config['MYSQL_PASSWORD'] = 'Kamleshk@1'
-app.config['MYSQL_DB'] = 'expense_tracker'
+DB_NAME = 'expense_tracker.db'
 
-mysql = MySQL(app)
+# Initialize database
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    # Users table
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL
+        )
+    ''')
+    # Expenses table
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            title TEXT,
+            amount REAL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
 # Home Page
 @app.route('/')
@@ -20,32 +40,37 @@ def index():
         return redirect(url_for('dashboard'))
     return render_template('index.html')
 
-# Register Page
+# Register
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
         username = request.form['username']
         password = generate_password_hash(request.form['password'])
-        
-        cur = mysql.connection.cursor()
-        cur.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, password))
-        mysql.connection.commit()
-        cur.close()
-        
+
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        try:
+            cur.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            return "Username already exists"
+        finally:
+            conn.close()
         return redirect(url_for('login'))
     return render_template('register.html')
 
-# Login Page
+# Login
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         username = request.form['username']
         password_input = request.form['password']
-        
-        cur = mysql.connection.cursor()
-        cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE username = ?", (username,))
         user = cur.fetchone()
-        cur.close()
+        conn.close()
 
         if user and check_password_hash(user[2], password_input):
             session['username'] = username
@@ -55,31 +80,20 @@ def login():
             return "Invalid credentials"
     return render_template('login.html')
 
-# Logout Route
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
-
-# Dashboard Page
+# Dashboard
 @app.route('/dashboard')
 def dashboard():
     if 'username' not in session:
         return redirect(url_for('login'))
 
-    user_id = session['user_id']
-    cur = mysql.connection.cursor()
-
-    # Fetch all expenses for the user
-    cur.execute("SELECT * FROM expenses WHERE user_id = %s", (user_id,))
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM expenses WHERE user_id = ?", (session['user_id'],))
     expenses = cur.fetchall()
+    cur.execute("SELECT SUM(amount) FROM expenses WHERE user_id = ?", (session['user_id'],))
+    total = cur.fetchone()[0] or 0.0
+    conn.close()
 
-    # Calculate total expenses
-    cur.execute("SELECT SUM(amount) FROM expenses WHERE user_id = %s", (user_id,))
-    total = cur.fetchone()[0]
-    total = total if total else 0.0
-
-    cur.close()
     return render_template('dashboard.html', expenses=expenses, total=total, username=session['username'])
 
 # Add Expense
@@ -90,37 +104,40 @@ def add_expense():
 
     title = request.form['title']
     amount = request.form['amount']
-    user_id = session['user_id']
 
-    cur = mysql.connection.cursor()
-    cur.execute("INSERT INTO expenses (user_id, title, amount) VALUES (%s, %s, %s)", (user_id, title, amount))
-    mysql.connection.commit()
-    cur.close()
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO expenses (user_id, title, amount) VALUES (?, ?, ?)",
+                (session['user_id'], title, amount))
+    conn.commit()
+    conn.close()
 
     return redirect(url_for('dashboard'))
 
-# UPDATE Expense
+# Update Expense
 @app.route('/update_expense/<int:expense_id>', methods=['GET', 'POST'])
 def update_expense(expense_id):
     if 'username' not in session:
         return redirect(url_for('login'))
-    
-    cur = mysql.connection.cursor()
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
     if request.method == 'POST':
         title = request.form['title']
         amount = request.form['amount']
-        cur.execute("UPDATE expenses SET title = %s, amount = %s WHERE id = %s AND user_id = %s", (title, amount, expense_id, session['user_id']))
-        mysql.connection.commit()
-        cur.close()
+        cur.execute("UPDATE expenses SET title = ?, amount = ? WHERE id = ? AND user_id = ?",
+                    (title, amount, expense_id, session['user_id']))
+        conn.commit()
+        conn.close()
         return redirect(url_for('dashboard'))
-    else:
-        cur.execute("SELECT * FROM expenses WHERE id = %s AND user_id = %s", (expense_id, session['user_id']))
-        expense = cur.fetchone()
-        cur.close()
-        if expense:
-            return render_template('update_expense.html', expense=expense)
-        else:
-            return "Expense not found", 404
+
+    cur.execute("SELECT * FROM expenses WHERE id = ? AND user_id = ?", (expense_id, session['user_id']))
+    expense = cur.fetchone()
+    conn.close()
+    if expense:
+        return render_template('update_expense.html', expense=expense)
+    return "Expense not found", 404
 
 # Delete Expense
 @app.route('/delete_expense/<int:expense_id>', methods=['POST'])
@@ -128,14 +145,20 @@ def delete_expense(expense_id):
     if 'username' not in session:
         return redirect(url_for('login'))
 
-    cur = mysql.connection.cursor()
-    cur.execute("DELETE FROM expenses WHERE id = %s AND user_id = %s", (expense_id, session['user_id']))
-    mysql.connection.commit()
-    cur.close()
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM expenses WHERE id = ? AND user_id = ?", (expense_id, session['user_id']))
+    conn.commit()
+    conn.close()
 
     return redirect(url_for('dashboard'))
 
-
+# Logout
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
 if __name__ == '__main__':
+    init_db()
     app.run(debug=True)
